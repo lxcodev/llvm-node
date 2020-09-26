@@ -1,3 +1,39 @@
+## 3.0.0 (2020-09-26)
+
+##### Build System / Dependencies
+
+*  Remove node 7 and 9 (aee25776)
+* **travis:**  Add LLVM 9 (4cf90b6c)
+
+##### New Features
+
+* **IR:**  Introduce FunctionCallee (08c81f70)
+
+##### Bug Fixes
+
+*  IRBuilderWrapper - register all methods (f3bc1041)
+
+##### Other Changes
+
+* NewFromUTF8 in MakeMaybe for version consistancy (d237a712)
+*  Change getValueAsString to toString method (d6ff8440)
+* APInt from StringRef (37ae6ec5)
+*  Add ConstantInt.getValueAsString method (cfaae4db)
+*  ConstantInt.value - return string for > 54 bits integers (795dfdb1)
+*  ConstantInt - support get from string #75 (8019512c)
+*  Support FP128Ty (ee2b4e9f)
+*  Use IntegerType (54673ac9)
+*  ConstantFP.getInfinity - support negative value (c745884f)
+*  Support ConstantFP.getInfinity (08ab58bd)
+*  ConstantFP support getNegativeZero/getZeroValueForNegation (f55ea8eb)
+*  Support CreateURem (5ba83ddf)
+*  Support getFloatPtrTy/getDoublePtrTy (00e0f7f2)
+* **IR:**
+  *  Add support for float constants (a317ed11)
+  *  IntegerTypeWrapper - initial (a19b5e4c)
+* **CI:**  Test under Node 10/11 (ac7e6784)
+* **tests:**  Add for getFloatPtrTy/getDoublePtrTy (98a93272)
+
 #### 2.1.0 (2018-10-24)
 
 - Add `isHalfTy` and `getHalfTy` to `Type` ([#60](https://github.com/MichaReiser/llvm-node/pull/60))
