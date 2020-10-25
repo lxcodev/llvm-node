@@ -84,6 +84,18 @@ Nan::Persistent<v8::FunctionTemplate> &PassWrapper::passTemplate() {
   return tmpl;
 }
 
+v8::Local<v8::Object> PassWrapper::of(llvm::Pass *pass) {
+    v8::Local<v8::FunctionTemplate> localTemplate = Nan::New(passTemplate());
+    v8::Local<v8::Function> constructor = Nan::GetFunction(localTemplate).ToLocalChecked();
+
+    v8::Local<v8::Value> args[1] = { Nan::New<v8::External>(pass) };
+
+    v8::Local<v8::Object> instance = Nan::NewInstance(constructor, 1, args ).ToLocalChecked();
+
+    Nan::EscapableHandleScope escapeScope {};
+    return escapeScope.Escape(instance);
+}
+
 // NAN_METHOD(PassWrapper::createPass) {
 //   if (info.Length() != 1 || !info[0]->IsUint32()) {
 //     return Nan::ThrowTypeError(
