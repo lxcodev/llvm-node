@@ -3,6 +3,7 @@
 // Created by Micha Reiser on 03.03.17.
 //
 
+#include <llvm/Support/Alignment.h>
 #include "alloca-inst.h"
 #include "type.h"
 
