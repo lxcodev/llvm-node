@@ -13,133 +13,143 @@
 #ifndef LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H
 #define LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H
 
+#include <algorithm>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/Orc/CompileOnDemandLayer.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+#include "llvm/ExecutionEngine/Orc/IRTransformLayer.h"
 #include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
+#include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
-#include <algorithm>
-#include <map>
-#include <memory>
-#include <string>
-#include <vector>
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/GVN.h"
 
 namespace llvm {
 namespace orc {
 
-
-
 class KaleidoscopeJIT {
-public:
-  using ObjLayerT = LegacyRTDyldObjectLinkingLayer;
-  using CompileLayerT = LegacyIRCompileLayer<ObjLayerT, SimpleCompiler>;
+ private:
+  ExecutionSession ES;
+  std::map<VModuleKey, std::shared_ptr<SymbolResolver>> Resolvers;
+  std::unique_ptr<TargetMachine> TM;
+  const DataLayout DL;
+  LegacyRTDyldObjectLinkingLayer ObjectLayer;
+  LegacyIRCompileLayer<decltype(ObjectLayer), SimpleCompiler> CompileLayer;
 
+  using OptimizeFunction =
+      std::function<std::unique_ptr<Module>(std::unique_ptr<Module>)>;
+
+  LegacyIRTransformLayer<decltype(CompileLayer), OptimizeFunction>
+      OptimizeLayer;
+
+  std::unique_ptr<JITCompileCallbackManager> CompileCallbackManager;
+  LegacyCompileOnDemandLayer<decltype(OptimizeLayer)> CODLayer;
+
+ public:
   KaleidoscopeJIT()
-      : Resolver(createLegacyLookupResolver(
-            ES,
-            [this](const std::string &Name) { return findMangledSymbol(Name); },
-            [](Error Err) { cantFail(std::move(Err), "lookupFlags failed"); })),
-        TM(EngineBuilder().selectTarget()), DL(TM->createDataLayout()),
+      : TM(EngineBuilder().selectTarget()),
+        DL(TM->createDataLayout()),
         ObjectLayer(AcknowledgeORCv1Deprecation, ES,
-                    [this](VModuleKey) {
-                      return ObjLayerT::Resources{
-                          std::make_shared<SectionMemoryManager>(), Resolver};
+                    [this](VModuleKey K) {
+                      return LegacyRTDyldObjectLinkingLayer::Resources{
+                          std::make_shared<SectionMemoryManager>(),
+                          Resolvers[K]};
                     }),
         CompileLayer(AcknowledgeORCv1Deprecation, ObjectLayer,
-                     SimpleCompiler(*TM)) {
+                     SimpleCompiler(*TM)),
+        OptimizeLayer(AcknowledgeORCv1Deprecation, CompileLayer,
+                      [this](std::unique_ptr<Module> M) {
+                        return optimizeModule(std::move(M));
+                      }),
+        CompileCallbackManager(cantFail(orc::createLocalCompileCallbackManager(
+            TM->getTargetTriple(), ES, 0))),
+        CODLayer(
+            AcknowledgeORCv1Deprecation, ES, OptimizeLayer,
+            [&](orc::VModuleKey K) { return Resolvers[K]; },
+            [&](orc::VModuleKey K, std::shared_ptr<SymbolResolver> R) {
+              Resolvers[K] = std::move(R);
+            },
+            [](Function &F) { return std::set<Function *>({&F}); },
+            *CompileCallbackManager,
+            orc::createLocalIndirectStubsManagerBuilder(
+                TM->getTargetTriple())) {
     llvm::sys::DynamicLibrary::LoadLibraryPermanently(nullptr);
   }
 
   TargetMachine &getTargetMachine() { return *TM; }
 
   VModuleKey addModule(std::unique_ptr<Module> M) {
-    auto K = ES.allocateVModule();
-    cantFail(CompileLayer.addModule(K, std::move(M)));
-    ModuleKeys.push_back(K);
+    // Create a new VModuleKey.
+    VModuleKey K = ES.allocateVModule();
+
+    // Build a resolver and associate it with the new key.
+    Resolvers[K] = createLegacyLookupResolver(
+        ES,
+        [this](StringRef Name) -> JITSymbol {
+          if (auto Sym = CompileLayer.findSymbol(std::string(Name), false))
+            return Sym;
+          else if (auto Err = Sym.takeError())
+            return std::move(Err);
+          if (auto SymAddr = RTDyldMemoryManager::getSymbolAddressInProcess(
+                  std::string(Name)))
+            return JITSymbol(SymAddr, JITSymbolFlags::Exported);
+          return nullptr;
+        },
+        [](Error Err) { cantFail(std::move(Err), "lookupFlags failed"); });
+
+    // Add the module to the JIT with the new key.
+    cantFail(CODLayer.addModule(K, std::move(M)));
     return K;
   }
 
-  void removeModule(VModuleKey K) {
-    ModuleKeys.erase(find(ModuleKeys, K));
-    cantFail(CompileLayer.removeModule(K));
-  }
-
   JITSymbol findSymbol(const std::string Name) {
-    return findMangledSymbol(mangle(Name));
-  }
-
-private:
-  std::string mangle(const std::string &Name) {
     std::string MangledName;
-    {
-
-      // llvm::orc::ExecutionSession::ExecutionSession session;
-      // llvm::orc::SymbolStringPool pool;
-
-      raw_string_ostream MangledNameStream(MangledName);
-      Mangler::getNameWithPrefix(MangledNameStream, Name, DL);
-    }
-    return MangledName;
+    raw_string_ostream MangledNameStream(MangledName);
+    Mangler::getNameWithPrefix(MangledNameStream, Name, DL);
+    return CODLayer.findSymbol(MangledNameStream.str(), true);
   }
 
-  JITSymbol findMangledSymbol(const std::string &Name) {
-#ifdef _WIN32
-    // The symbol lookup of ObjectLinkingLayer uses the SymbolRef::SF_Exported
-    // flag to decide whether a symbol will be visible or not, when we call
-    // IRCompileLayer::findSymbolIn with ExportedSymbolsOnly set to true.
-    //
-    // But for Windows COFF objects, this flag is currently never set.
-    // For a potential solution see: https://reviews.llvm.org/rL258665
-    // For now, we allow non-exported symbols on Windows as a workaround.
-    const bool ExportedSymbolsOnly = false;
-#else
-    const bool ExportedSymbolsOnly = true;
-#endif
+  void removeModule(VModuleKey K) { cantFail(CODLayer.removeModule(K)); }
 
-    // Search modules in reverse order: from last added to first added.
-    // This is the opposite of the usual search order for dlsym, but makes more
-    // sense in a REPL where we want to bind to the newest available definition.
-    for (auto H : make_range(ModuleKeys.rbegin(), ModuleKeys.rend()))
-      if (auto Sym = CompileLayer.findSymbolIn(H, Name, ExportedSymbolsOnly))
-        return Sym;
+ private:
+  std::unique_ptr<Module> optimizeModule(std::unique_ptr<Module> M) {
+    // Create a function pass manager.
+    auto FPM = std::make_unique<legacy::FunctionPassManager>(M.get());
 
-    // If we can't find the symbol in the JIT, try looking in the host process.
-    if (auto SymAddr = RTDyldMemoryManager::getSymbolAddressInProcess(Name))
-      return JITSymbol(SymAddr, JITSymbolFlags::Exported);
+    // Add some optimizations.
+    FPM->add(createInstructionCombiningPass());
+    FPM->add(createReassociatePass());
+    FPM->add(createGVNPass());
+    FPM->add(createCFGSimplificationPass());
+    FPM->doInitialization();
 
-#ifdef _WIN32
-    // For Windows retry without "_" at beginning, as RTDyldMemoryManager uses
-    // GetProcAddress and standard libraries like msvcrt.dll use names
-    // with and without "_" (for example "_itoa" but "sin").
-    if (Name.length() > 2 && Name[0] == '_')
-      if (auto SymAddr =
-              RTDyldMemoryManager::getSymbolAddressInProcess(Name.substr(1)))
-        return JITSymbol(SymAddr, JITSymbolFlags::Exported);
-#endif
+    // Run the optimizations over all functions in the module being added to
+    // the JIT.
+    for (auto &F : *M) FPM->run(F);
 
-    return nullptr;
+    return M;
   }
-
-  ExecutionSession ES;
-  std::shared_ptr<SymbolResolver> Resolver;
-  std::unique_ptr<TargetMachine> TM;
-  const DataLayout DL;
-  ObjLayerT ObjectLayer;
-  CompileLayerT CompileLayer;
-  std::vector<VModuleKey> ModuleKeys;
 };
 
-} // end namespace orc
-} // end namespace llvm
+}  // end namespace orc
+}  // end namespace llvm
 
-#endif // LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H
+#endif  // LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H
