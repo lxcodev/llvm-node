@@ -20,6 +20,12 @@ declare namespace llvm {
 
   function initializeAllAsmPrinters(): void;
 
+  function initializeNativeTarget(): void;
+
+  function initializeNativeTargetAsmParser(): void;
+
+  function initializeNativeTargetAsmPrinter(): void;
+
   namespace Attribute {
     enum AttrKind {
       Alignment,
@@ -794,8 +800,6 @@ declare namespace llvm {
 
   class FunctionPassManager extends PassManager {
     constructor(module: Module);
-
-    runForFunction(fn: Function): boolean;
 
     doInitialization(): boolean;
 

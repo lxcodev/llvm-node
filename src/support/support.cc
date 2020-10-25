@@ -21,6 +21,18 @@ NAN_METHOD(InitializeAllAsmPrinters) {
     llvm::InitializeAllAsmPrinters();
 }
 
+NAN_METHOD(InitializeNativeTarget) {
+    llvm::InitializeNativeTarget();
+}
+
+NAN_METHOD(InitializeNativeTargetAsmParser) {
+    llvm::InitializeNativeTargetAsmParser();
+}
+
+NAN_METHOD(InitializeNativeTargetAsmPrinter) {
+    llvm::InitializeNativeTargetAsmPrinter();
+}
+
 NAN_MODULE_INIT(InitSupport) {
     Nan::Set(target, 
         Nan::New<v8::String>("initializeAllTargetInfos").ToLocalChecked(),
@@ -45,6 +57,21 @@ NAN_MODULE_INIT(InitSupport) {
      Nan::Set(target, 
         Nan::New<v8::String>("initializeAllAsmPrinters").ToLocalChecked(),
         Nan::GetFunction(Nan::New<v8::FunctionTemplate>(InitializeAllAsmPrinters)).ToLocalChecked()
+    );
+
+    Nan::Set(target, 
+        Nan::New<v8::String>("initializeNativeTarget").ToLocalChecked(),
+        Nan::GetFunction(Nan::New<v8::FunctionTemplate>(InitializeNativeTarget)).ToLocalChecked()
+    );
+
+     Nan::Set(target, 
+        Nan::New<v8::String>("initializeNativeTargetAsmParser").ToLocalChecked(),
+        Nan::GetFunction(Nan::New<v8::FunctionTemplate>(InitializeNativeTargetAsmParser)).ToLocalChecked()
+    );
+
+     Nan::Set(target, 
+        Nan::New<v8::String>("initializeNativeTargetAsmPrinter").ToLocalChecked(),
+        Nan::GetFunction(Nan::New<v8::FunctionTemplate>(InitializeNativeTargetAsmPrinter)).ToLocalChecked()
     );
 
     TargetRegistryWrapper::Init(target);

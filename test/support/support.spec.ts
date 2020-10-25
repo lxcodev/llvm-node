@@ -6,4 +6,8 @@ test("can call initialize functions", () => {
   llvm.initializeAllTargetMCs();
   llvm.initializeAllAsmParsers();
   llvm.initializeAllAsmPrinters();
+
+  llvm.initializeNativeTarget();
+  llvm.initializeNativeTargetAsmParser();
+  llvm.initializeNativeTargetAsmPrinter();
 });
