@@ -22,9 +22,9 @@ class JitSymbolWrapper : public Nan::ObjectWrap,
   using FromValueMixin<JitSymbolWrapper>::FromValue;
 
  private:
-  llvm::JITSymbol *symbol;
+  std::unique_ptr<llvm::JITSymbol> symbol;
 
-  JitSymbolWrapper(llvm::JITSymbol *symbol) : symbol{symbol} {}
+  JitSymbolWrapper(llvm::JITSymbol *symbolPtr) : symbol{symbolPtr} {}
 
   static Nan::Persistent<v8::FunctionTemplate> &symbolTemplate();
 

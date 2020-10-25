@@ -49,20 +49,34 @@ Nan::Persistent<v8::FunctionTemplate> &JitSymbolWrapper::symbolTemplate() {
   return tmpl;
 }
 
+v8::Local<v8::Object> JitSymbolWrapper::of(llvm::JITSymbol *symbol) {
+  v8::Local<v8::FunctionTemplate> localTemplate = Nan::New(symbolTemplate());
+  v8::Local<v8::Function> constructor =
+      Nan::GetFunction(localTemplate).ToLocalChecked();
+
+  v8::Local<v8::Value> args[1] = {Nan::New<v8::External>(symbol)};
+
+  v8::Local<v8::Object> instance =
+      Nan::NewInstance(constructor, 1, args).ToLocalChecked();
+
+  Nan::EscapableHandleScope escapeScope{};
+  return escapeScope.Escape(instance);
+}
+
 NAN_GETTER(JitSymbolWrapper::address) {
-  auto *symbol = JitSymbolWrapper::FromValue(info.Holder())->symbol;
+  auto *symbol = JitSymbolWrapper::FromValue(info.Holder())->symbol.get();
   auto address = (double (*)())(intptr_t)cantFail(symbol->getAddress());
   info.GetReturnValue().Set(Nan::New(address));
 }
 
 NAN_METHOD(JitSymbolWrapper::call) {
-  auto *symbol = JitSymbolWrapper::FromValue(info.Holder())->symbol;
-  auto fp = (double (*)())(intptr_t)cantFail(symbol->getAddress());
+  auto *symbol = JitSymbolWrapper::FromValue(info.Holder())->symbol.get();
+  double (*fp)() = (double (*)())(intptr_t)cantFail(symbol->getAddress());
   auto result = fp();
   info.GetReturnValue().Set(Nan::New(result));
 }
 
-llvm::JITSymbol *JitSymbolWrapper::getJitSymbol() { return symbol; }
+llvm::JITSymbol *JitSymbolWrapper::getJitSymbol() { return symbol.get(); }
 
 bool JitSymbolWrapper::isInstance(v8::Local<v8::Value> value) {
   return Nan::New(symbolTemplate())->HasInstance(value);

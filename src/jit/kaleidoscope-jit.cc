@@ -81,9 +81,9 @@ NAN_METHOD(KaleidoscopeJitWrapper::findSymbol) {
 
   auto* wrapper = KaleidoscopeJitWrapper::FromValue(info.Holder());
   const std::string name = ToString(info[0]);
-  auto symbol = wrapper->jit->findSymbol(name);
+  auto symbol = new llvm::JITSymbol(wrapper->jit->findSymbol(name));
 
-  info.GetReturnValue().Set(JitSymbolWrapper::of(&symbol));
+  info.GetReturnValue().Set(JitSymbolWrapper::of(std::move(symbol)));
 }
 
 llvm::orc::KaleidoscopeJIT* KaleidoscopeJitWrapper::getKaleidoscopeJit() {
